@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>爱心粒子动画</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    .controls {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 5px;
+      z-index: 100;
+    }
+    button {
+      background: #333;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      margin: 0 5px;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    button:hover {
+      background: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <button onclick="toggleAnimation()">开始/停止</button>
+    <button onclick="resetAnimation()">重置</button>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    let scene, camera, renderer;
+    let heartSystem, baseSystem;
+    let isAnimating = false;
+    const particles = [];
+    const baseParticles = [];
+    
+    // 调整配置参数
+    const config = {
+      heartParticles: 20000,    
+      baseParticles: 4000,      
+      dropSpeed: 0.008,         
+      spiralSpeed: 0.015,       
+      baseRotationSpeed: 0.0004, // 降低底部旋转速度
+      mergeSpeed: 0.05,         
+      dropProbability: 0.0004,
+      outerLayerColor: {r: 1, g: 0.4, b: 0.7}, // 外层粒子颜色（与掉落粒子一致）
+      innerLayerColor: {r: 0.2, g: 0.4, b: 1}  // 内层粒子颜色（蓝色）
+    };
+
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setClearColor(0x000000);
+      document.body.appendChild(renderer.domElement);
+      
+      camera.position.z = 5;
+      
+      createHeartSystem();
+      createBaseSystem();
+      animate();
+    }
+
+    function createHeartSystem() {
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(config.heartParticles * 3);
+      const colors = new Float32Array(config.heartParticles * 3);
+      
+      for(let i = 0; i < config.heartParticles; i++) {
+        const i3 = i * 3;
+        const t = i / config.heartParticles * Math.PI * 2;
+        const size = 0.8;
+        
+        const x = size * 16 * Math.pow(Math.sin(t), 3);
+        const y = size * (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+        const z = (Math.random() - 0.5) * 0.5;
+        
+        positions[i3] = x * 0.1;
+        positions[i3 + 1] = y * 0.1 + 1;
+        positions[i3 + 2] = z;
+        
+        colors[i3] = config.outerLayerColor.r;
+        colors[i3 + 1] = config.outerLayerColor.g;
+        colors[i3 + 2] = config.outerLayerColor.b;
+        
+        particles.push({
+          originalPos: new THREE.Vector3(x * 0.1, y * 0.1 + 1, z),
+          currentPos: new THREE.Vector3(x * 0.1, y * 0.1 + 1, z),
+          velocity: new THREE.Vector3(0, 0, 0),
+          phase: 0,
+          isDripping: false,
+          mergePhase: 0,
+          spiralAngle: Math.random() * Math.PI * 2,
+          targetBaseRadius: 2 + Math.random() * 1.5,
+          dropDelay: Math.random() * 2
+        });
+      }
+      
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      
+      const material = new THREE.PointsMaterial({
+        size: 0.02,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending
+      });
+      
+      heartSystem = new THREE.Points(geometry, material);
+      scene.add(heartSystem);
+    }
+
+    function createBaseSystem() {
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(config.baseParticles * 3);
+      const colors = new Float32Array(config.baseParticles * 3);
+      
+      for(let i = 0; i < config.baseParticles; i++) {
+        const i3 = i * 3;
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.random() * 3 + 0.5;
+        
+        positions[i3] = Math.cos(angle) * radius;
+        positions[i3 + 1] = -1.8;
+        positions[i3 + 2] = Math.sin(angle) * radius;
+        
+        // 根据半径决定颜色
+        const radiusNormalized = (radius - 0.5) / 3; // 归一化半径
+        const isOuterLayer = radiusNormalized > 0.7; // 外层判断
+
+        let color;
+        if (isOuterLayer) {
+          color = config.outerLayerColor;
+        } else {
+          // 内层到外层的渐变
+          const t = radiusNormalized / 0.7;
+          color = {
+            r: THREE.MathUtils.lerp(config.innerLayerColor.r, config.outerLayerColor.r, t),
+            g: THREE.MathUtils.lerp(config.innerLayerColor.g, config.outerLayerColor.g, t),
+            b: THREE.MathUtils.lerp(config.innerLayerColor.b, config.outerLayerColor.b, t)
+          };
+        }
+
+        colors[i3] = color.r;
+        colors[i3 + 1] = color.g;
+        colors[i3 + 2] = color.b;
+        
+        baseParticles.push({
+          radius: radius,
+          angle: angle,
+          rotationSpeed: config.baseRotationSpeed * (isOuterLayer ? 1 : 0.5) // 外层正常速度，内层更慢
+        });
+      }
+      
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      
+      const material = new THREE.PointsMaterial({
+        size: 0.02,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.6,
+        blending: THREE.AdditiveBlending
+      });
+      
+      baseSystem = new THREE.Points(geometry, material);
+      scene.add(baseSystem);
+    }
+
+    function updateParticles() {
+      const positions = heartSystem.geometry.attributes.position.array;
+      const colors = heartSystem.geometry.attributes.color.array;
+      
+      for(let i = 0; i < config.heartParticles; i++) {
+        const i3 = i * 3;
+        const particle = particles[i];
+        
+        if(isAnimating && !particle.isDripping && 
+           particle.originalPos.y < 0.9 && 
+           Math.random() < config.dropProbability) {
+          particle.isDripping = true;
+        }
+        
+        if(particle.isDripping) {
+          if(particle.dropDelay > 0) {
+            particle.dropDelay -= 0.016;
+            continue;
+          }
+          
+          particle.spiralAngle += config.spiralSpeed * (1 - Math.exp(-particle.currentPos.y));
+          const spiralRadius = 0.5 * (1 + (particle.originalPos.y - particle.currentPos.y) * 0.1);
+          
+          particle.currentPos.x = Math.cos(particle.spiralAngle) * spiralRadius;
+          particle.currentPos.z = Math.sin(particle.spiralAngle) * spiralRadius;
+          particle.currentPos.y -= config.dropSpeed * (1 + Math.sin(particle.spiralAngle * 0.5) * 0.2);
+          
+          if(particle.currentPos.y < -1.4) {
+            particle.mergePhase += config.mergeSpeed;
+            const t = Math.min(1, particle.mergePhase);
+            
+            const targetAngle = particle.spiralAngle + t * config.baseRotationSpeed;
+            const targetX = Math.cos(targetAngle) * particle.targetBaseRadius;
+            const targetZ = Math.sin(targetAngle) * particle.targetBaseRadius;
+            
+            particle.currentPos.x = THREE.MathUtils.lerp(particle.currentPos.x, targetX, t);
+            particle.currentPos.z = THREE.MathUtils.lerp(particle.currentPos.z, targetZ, t);
+            particle.currentPos.y = THREE.MathUtils.lerp(particle.currentPos.y, -1.8, t);
+            
+            // 保持原有颜色
+            colors[i3] = config.outerLayerColor.r;
+            colors[i3 + 1] = config.outerLayerColor.g;
+            colors[i3 + 2] = config.outerLayerColor.b;
+          }
+          
+          if(particle.currentPos.y < -2) {
+            particle.isDripping = false;
+            particle.mergePhase = 0;
+            particle.currentPos.copy(particle.originalPos);
+            particle.dropDelay = Math.random() * 2;
+            colors[i3] = config.outerLayerColor.r;
+            colors[i3 + 1] = config.outerLayerColor.g;
+            colors[i3 + 2] = config.outerLayerColor.b;
+          }
+        }
+        
+        positions[i3] = particle.currentPos.x;
+        positions[i3 + 1] = particle.currentPos.y;
+        positions[i3 + 2] = particle.currentPos.z;
+      }
+      
+      heartSystem.geometry.attributes.position.needsUpdate = true;
+      heartSystem.geometry.attributes.color.needsUpdate = true;
+      
+      // 更新底部粒子系统
+      const basePositions = baseSystem.geometry.attributes.position.array;
+      for(let i = 0; i < config.baseParticles; i++) {
+        const i3 = i * 3;
+        const baseParticle = baseParticles[i];
+        
+        baseParticle.angle += baseParticle.rotationSpeed;
+        
+        basePositions[i3] = Math.cos(baseParticle.angle) * baseParticle.radius;
+        basePositions[i3 + 2] = Math.sin(baseParticle.angle) * baseParticle.radius;
+      }
+      
+      baseSystem.geometry.attributes.position.needsUpdate = true;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      updateParticles();
+      renderer.render(scene, camera);
+    }
+
+    function toggleAnimation() {
+      isAnimating = !isAnimating;
+    }
+
+    function resetAnimation() {
+      isAnimating = false;
+      particles.forEach(p => {
+        p.isDripping = false;
+        p.mergePhase = 0;
+        p.currentPos.copy(p.originalPos);
+        p.dropDelay = Math.random() * 2;
+      });
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    init();
+  </script>
+</body>
+</html>
